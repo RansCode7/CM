@@ -1,0 +1,173 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var AnK_aoi = 
+    /* color: #d6d1d1 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[108.99717851058726, 32.67933977489534],
+          [109.00310082809214, 32.676594454425235],
+          [109.01142640487437, 32.691259266686195],
+          [109.01777787582164, 32.698193511546634],
+          [109.02275605575328, 32.70187711002658],
+          [109.0281633891273, 32.704116085787156],
+          [109.03460069076304, 32.70332161694746],
+          [109.03863473312144, 32.702382690108614],
+          [109.03743310348277, 32.71567119644295],
+          [109.03005166427378, 32.71494904587505],
+          [109.02129693404918, 32.71191594964446],
+          [109.01408715621714, 32.706282783034936],
+          [109.00756402389293, 32.69934916665231],
+          [109.0010408915687, 32.689236677138446]]]),
+    JRC = ee.Image("JRC/GSW1_3/GlobalSurfaceWater"),
+    Flow_AnK = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_AnK"),
+    l5 = ee.ImageCollection("LANDSAT/LT05/C02/T1_L2"),
+    l7 = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2"),
+    l8 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2"),
+    l9 = ee.ImageCollection("LANDSAT/LC09/C02/T1_L2"),
+    AOI_po = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[11.629936145745367, 44.882119267717734],
+          [11.640750812493414, 44.88674111328093],
+          [11.651222156487554, 44.89172742493162],
+          [11.654998706780523, 44.89951007177105],
+          [11.64384071727857, 44.90729166531597],
+          [11.634227680169195, 44.90121238536223],
+          [11.622554706536382, 44.89549727602766],
+          [11.610023426018804, 44.89270031338855],
+          [11.598007129632085, 44.89440282858681],
+          [11.594573902093023, 44.90011804669669],
+          [11.593372272454351, 44.90644060482385],
+          [11.593200611077398, 44.91446438878838],
+          [11.587364124260992, 44.91859741609592],
+          [11.573974536858648, 44.922730146135095],
+          [11.566593097649664, 44.925404107166216],
+          [11.55818169017896, 44.92929328284971],
+          [11.546680377923101, 44.92212241036115],
+          [11.55646507640943, 44.91592313825279],
+          [11.568138050042242, 44.91446438878838],
+          [11.578094409905523, 44.90972319729093],
+          [11.580326007805914, 44.901455568903685],
+          [11.582042621575445, 44.89014644608788],
+          [11.58890907665357, 44.88394372479867],
+          [11.594745622264305, 44.88102465480322],
+          [11.600925373040289, 44.88017311639118],
+          [11.610710094027818, 44.879808699827024],
+          [11.619979785882085, 44.881024565696826]]]),
+    Flow_po = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_poriver"),
+    AOI_po2 = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[11.56697936717503, 44.91463871108727],
+          [11.576764065661358, 44.91135639935798],
+          [11.578824002184795, 44.9072228512541],
+          [11.580883938708233, 44.90126515606777],
+          [11.583115536608624, 44.89457721173038],
+          [11.584832150378155, 44.886915519656064],
+          [11.591011959948467, 44.88205042352737],
+          [11.600281674303936, 44.87998263308281],
+          [11.611955070888742, 44.87980064371163],
+          [11.619336492144967, 44.87958758844962],
+          [11.62191100780003, 44.87548189110346],
+          [11.62191100780003, 44.89409078543467],
+          [11.603028256335186, 44.89275309190636],
+          [11.596333462634014, 44.89652287576904],
+          [11.593758541979717, 44.908073900164624],
+          [11.591011959948467, 44.9147602745882]]]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+/*var point=ee.Geometry.Point([11.608072, 44.888296])
+var AOI=point.buffer(1000).bounds()*/
+//var AOI=table.geometry()//table2.filter(ee.Filter.eq('Name','AnK'));
+var AOI=AnK_aoi.bounds()
+Map.centerObject(AOI,13)
+var Name='CM_AnK_05_995';
+var foderName='CM_Ank_3_level';
+var Scale=30;
+var RealpixelRate=0.5;
+var bufferTimes=3;
+var percen=99;
+var startDate='2015-1-1';
+var midDate='2018-12-31';
+var endDate='2019-12-31';
+var JRCmax=JRC.select('max_extent').clip(AOI).focalMax(1.5,"circle","pixels",bufferTimes);
+var AOI2=JRCmax.eq(1).geometry();
+var JRCmask=ee.Image.pixelArea().clip(AOI2);
+var CMfun=require('users/RAN_CHEN/FUNCTION:RelateCM');
+
+var datasatl8=l8.filterBounds(AOI).filterDate(startDate, endDate)
+              .map(CMfun.maskCloud_l8_9)
+              .map(function(img){
+                var Q=Flow_AnK.filter(ee.Filter.eq('Date',img.date().format('yyyy-MM-dd'))).first().get('Discharge');
+                return img.clip(AOI).set('Q',ee.Number(Q));})
+              .map(function(image){return image.set('date', image.date().format("yyyyMMdd"),'doy',image.date().format('DD'))})
+              .sort('system:time_start');
+var datasat=CMfun.CalRealPixel(datasatl8,AOI2,Scale).filter(ee.Filter.gt('RealpixelRate',RealpixelRate));
+print(datasatl8,datasat,'Image Numbers')
+
+var dates=datasat.map(function(img){
+  var valid_date=ee.Algorithms.If(ee.Number(img.get('RealpixelRate')).gte(RealpixelRate),img.date().format('yyyy-MM-dd'));
+  return ee.Feature(null, {'date': valid_date})}).distinct('date').aggregate_array('date');
+var Col=ee.ImageCollection(dates.map(function(date){
+  return datasat.filterDate(date,ee.Date(date).advance(1,'day')).toList(2);
+}).flatten());
+print(dates,Col,'After Image Numbers')
+var viz={bands:['Nir','Swir1','Red'],min:0,max:0.4};
+Map.addLayer(Col.first(),viz,'Landsat_NIR')
+Map.addLayer(JRCmax.selfMask(),{palette:'#b2b2b2',min:0,max:1},'JRC')
+
+var Colmap=Col.filter(ee.Filter.gt('Q',1000)).sort('Q');
+Col=Col.map(function(img){return img.select('Nir')});
+
+//var ulow=CMfun.CalQthred(Flow_po,'2010-1-1','2020-1-1',5);
+var low=520//CMfun.CalQthred(Flow_po,startDate,midDate,30);
+var mid=1000//CMfun.CalQthred(Flow_po,startDate,midDate,90);
+print(low,mid)
+
+//Calculate:[cpixel_mask]
+var Col_CV=Col.filterDate(startDate, midDate);
+var cpixel_mask=CMfun.CalCmask(Col_CV,AOI,Scale);
+///First Calculate:[C_value] And [m_mask]///
+var Col_all=CMfun.CalAllC(Col,cpixel_mask,AOI,Scale,JRCmax);
+var Col_Train_all=Col_all.filterDate(startDate, midDate);
+var Col_Train_low=Col_Train_all.filter(ee.Filter.lt('Q',low));
+var Col_Train_mid=Col_Train_all.filter(ee.Filter.and(ee.Filter.lt('Q',mid),ee.Filter.gte('Q',low)));
+var Col_Train_high=Col_Train_all.filter(ee.Filter.gte('Q',mid));
+//print(Col_Train_all,Col_Train_low,Col_Train_mid,Col_Train_high,'Col_Train')
+
+//Calculate:[mpixel_mask]
+var mpixel_mask_all =CMfun.CalMmask(Col_Train_all,percen,AOI,Scale);
+var mpixel_mask_low =CMfun.CalMmask(Col_Train_low,percen,AOI,Scale);
+var mpixel_mask_mid =CMfun.CalMmask(Col_Train_mid,percen,AOI,Scale);
+var mpixel_mask_high=CMfun.CalMmask(Col_Train_high,percen,AOI,Scale);
+
+Map.addLayer(mpixel_mask_all.selfMask(),{palette:'red'},'mmask');
+Map.addLayer(mpixel_mask_low.selfMask(),{palette:'#02ff0a'},'mmask_low');
+Map.addLayer(mpixel_mask_mid.selfMask(),{palette:'#fbff00'},'mmask_mid');
+Map.addLayer(mpixel_mask_high.selfMask(),{palette:'#3300ff'},'mmask_high');
+Map.addLayer(cpixel_mask.selfMask(),{palette:'99d9ea'},'cmask');
+///Second Calculate:[M_value]///
+var Col_Test=Col_all.filterDate(ee.Date(midDate).advance(1,'day'),endDate);
+
+var e_all_Q=CMfun.CalCMindex(Col_all,mpixel_mask_all,AOI,Scale,JRCmax,0);
+var e_low_Q=CMfun.CalCMindex(Col_Train_low.merge(Col_Test),mpixel_mask_low,AOI,Scale,JRCmax,1);
+var e_mid_Q=CMfun.CalCMindex(Col_Train_mid.merge(Col_Test),mpixel_mask_mid,AOI,Scale,JRCmax,2);
+var e_high_Q=CMfun.CalCMindex(Col_Train_high.merge(Col_Test),mpixel_mask_high,AOI,Scale,JRCmax,3);
+print(e_mid_Q)
+///Export Data///
+CMfun.exportCSV(e_all_Q,Name+'_all',foderName);
+CMfun.exportCSV(e_low_Q,Name+'_low',foderName);
+CMfun.exportCSV(e_mid_Q,Name+'_mid',foderName);
+CMfun.exportCSV(e_high_Q,Name+'_high',foderName);
+
+e_all_Q=e_all_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate);
+e_low_Q=e_low_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate);
+e_mid_Q=e_mid_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate);
+e_high_Q=e_high_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate);
+var final_Q=e_all_Q.merge(e_low_Q).merge(e_mid_Q).merge(e_high_Q).sort('Index')
+print(final_Q)
+CMfun.exportCSV(final_Q,Name+'_Final',foderName);
+///Add Map
+var mapfun=require('users/RAN_CHEN/FUNCTION:addMap');
+var viz={bands:['Nir','Swir1','Red'],min:0,max:0.4};
+mapfun.addPanel(Colmap, "date",AOI,viz);

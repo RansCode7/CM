@@ -1,0 +1,92 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var AnK_aoi = 
+    /* color: #d6d1d1 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[109.00197249877077, 32.70524101042399],
+          [109.00197249877077, 32.686921519310346],
+          [109.02377349364382, 32.686921519310346],
+          [109.02377349364382, 32.70524101042399]]], null, false),
+    YangX_aoi = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[107.52350781822028, 33.22625542824832],
+          [107.52350781822028, 33.205934089241275],
+          [107.54779790305915, 33.205934089241275],
+          [107.54779790305915, 33.22625542824832]]], null, false),
+    JRC = ee.Image("JRC/GSW1_3/GlobalSurfaceWater"),
+    s2c = ee.ImageCollection("COPERNICUS/S2"),
+    Flow_AnK = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_AnK"),
+    table = ee.FeatureCollection("users/RAN_CHEN/CM/Ank_reach_buffer");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+//var point=ee.Geometry.Point([107.52218, 33.22178])
+//var AOI=point.buffer(660).bounds()
+//var AOI=table.geometry()//table2.filter(ee.Filter.eq('Name','AnK'));
+var AOI=AnK_aoi.buffer(500).bounds()//table3.geometry();
+
+Map.centerObject(AOI,13)
+var Name='_S2_AnK_08_99';
+var foderName='CMW';
+var Scale=10;
+var RealpixelRate=0.5;
+var bufferTimes=2;
+var percen=99;
+var startDate='2015-1-1';
+var yearStart='2010-1-1';
+var midDate='2018-12-31';
+var endDate='2019-12-31';
+var JRCmax=JRC.select('max_extent').clip(AOI).focalMax(1.5,"circle","pixels",bufferTimes);
+var AOI2=JRCmax.eq(1).geometry();
+var JRCmask=ee.Image.pixelArea().clip(AOI2);
+
+var CMfun=require('users/RAN_CHEN/FUNCTION:RelateCMW');
+var mapfun=require('users/RAN_CHEN/FUNCTION:addMap');
+var datasat = s2c.filterBounds(AOI).filterDate(startDate, endDate).map(CMfun.maskS2clouds)
+                 .map(function(img){
+                   var Q=Flow_AnK.filter(ee.Filter.eq('Date',img.date().format('yyyy-MM-dd'))).first().get('Discharge');
+                  return img.clip(AOI).set('Q',ee.Number(Q));})
+                 .map(function(image) {return image.set('date', image.date().format("yyyyMMdd"),'doy',image.date().format('DD'));})
+                 .sort("system:time_start");
+datasat=CMfun.CalRealPixel(datasat,AOI2,Scale);
+var dates=datasat.map(function(img){
+  var valid_date=ee.Algorithms.If(ee.Number(img.get('RealpixelRate')).gte(RealpixelRate),img.date().format('YYYY-MM-dd'));
+  return ee.Feature(null, {'date': valid_date})}).distinct('date').aggregate_array('date');
+var Col=ee.ImageCollection(dates.map(function(date){
+  return datasat.filterDate(date,ee.Date(date).advance(1,'day')).toList(1);
+}).flatten());
+print(dates,Col);
+var viz={bands:['Nir','Swir1','Red'],min:0,max:0.3};
+Map.addLayer(Col.first(),{min:0,max:0.3},'NIR')
+
+var Colmap=Col.filter(ee.Filter.gt('Q',4000)).sort('Q');
+Col=Col.map(function(img){return img.select('Nir')});
+//计算C、W:Pixel_Mask//
+var Col_CV=Col.filterDate(startDate, midDate);
+var cpixel_mask=CMfun.CalCmask(Col_CV,AOI,Scale);
+var wpixel_mask=CMfun.CalWmask(Col_CV,AOI,Scale);
+Map.addLayer(cpixel_mask.selfMask(),{palette:'blue'},'cmask');
+Map.addLayer(wpixel_mask.selfMask(),{palette:'green'},'wmask');
+
+//计算C、W、M timeSeris//
+var Col_all=CMfun.CalAllCW(Col,cpixel_mask,wpixel_mask,AOI,Scale,JRCmax);
+print(Col_all);
+var Col_train=Col_all.filterDate(startDate, midDate);
+var mpixel_mask1=CMfun.CalMmask(Col_train,percen,AOI,Scale);
+var mpixel_mask4=CMfun.CalMmask2(Col_train,AOI,Scale);
+//Map.addLayer(corr_Q,{bands:['correlation'],palette:['cccccc', 'ffffff','99d9ea', '0000ff']},'corr_Q')
+//Map.addLayer(corr_C,{bands:['correlation'],palette:["6516ff","fff3fc","1de0ff","ff4e19","f9ff9b"]},'corr_C')
+//Map.addLayer(corr_W,{bands:['correlation'],min:-0.1514,max:0.9099,palette:['FFFFFF', 'FCD163', '207401', '004C00', '012E01', '011301']},'corr_W')
+Map.addLayer(mpixel_mask1.selfMask(),{palette:'#00ff08'},'mmask1');
+Map.addLayer(mpixel_mask4.selfMask(),{palette:'red'},'mmask2');
+
+///计算M：timeSeris//
+var Col_Test=Col_all.filterDate(ee.Date(midDate).advance(1,'day'),endDate);
+var Col_CMW1=CMfun.CalCMW(Col_train.merge(Col_Test).sort('system:time_start'),mpixel_mask1,AOI,Scale,JRCmax);
+var Col_CMW4=CMfun.CalCMW(Col_train.merge(Col_Test).sort('system:time_start'),mpixel_mask4,AOI,Scale,JRCmax);
+print(Col_CMW1,Col_CMW4,'Col4_CMW');
+
+CMfun.exportCSV(Col_CMW1,'CMW1'+Name,foderName);
+CMfun.exportCSV(Col_CMW4,'CMW4'+Name,foderName);
+
+mapfun.addPanel(Colmap, "date",AOI,viz);

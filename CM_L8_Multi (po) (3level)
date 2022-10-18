@@ -1,0 +1,421 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var AnK_aoi = /* color: #d6d1d1 */ee.Geometry.Polygon(
+        [[[109.00197249877077, 32.70524101042399],
+          [109.00197249877077, 32.686921519310346],
+          [109.02377349364382, 32.686921519310346],
+          [109.02377349364382, 32.70524101042399]]], null, false),
+    JRC = ee.Image("JRC/GSW1_3/GlobalSurfaceWater"),
+    Flow_AnK = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_AnK"),
+    l5 = ee.ImageCollection("LANDSAT/LT05/C02/T1_L2"),
+    l7 = ee.ImageCollection("LANDSAT/LE07/C02/T1_L2"),
+    l8 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2"),
+    l9 = ee.ImageCollection("LANDSAT/LC09/C02/T1_L2"),
+    AOI_po = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[11.629936145745367, 44.882119267717734],
+          [11.640750812493414, 44.88674111328093],
+          [11.651222156487554, 44.89172742493162],
+          [11.654998706780523, 44.89951007177105],
+          [11.64384071727857, 44.90729166531597],
+          [11.634227680169195, 44.90121238536223],
+          [11.622554706536382, 44.89549727602766],
+          [11.610023426018804, 44.89270031338855],
+          [11.598007129632085, 44.89440282858681],
+          [11.594573902093023, 44.90011804669669],
+          [11.593372272454351, 44.90644060482385],
+          [11.593200611077398, 44.91446438878838],
+          [11.587364124260992, 44.91859741609592],
+          [11.573974536858648, 44.922730146135095],
+          [11.566593097649664, 44.925404107166216],
+          [11.55818169017896, 44.92929328284971],
+          [11.546680377923101, 44.92212241036115],
+          [11.55646507640943, 44.91592313825279],
+          [11.568138050042242, 44.91446438878838],
+          [11.578094409905523, 44.90972319729093],
+          [11.580326007805914, 44.901455568903685],
+          [11.582042621575445, 44.89014644608788],
+          [11.58890907665357, 44.88394372479867],
+          [11.594745622264305, 44.88102465480322],
+          [11.600925373040289, 44.88017311639118],
+          [11.610710094027818, 44.879808699827024],
+          [11.619979785882085, 44.881024565696826]]]),
+    Flow_po = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_poriver"),
+    AOI_po2 = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[11.56697936717503, 44.91463871108727],
+          [11.576764065661358, 44.91135639935798],
+          [11.578824002184795, 44.9072228512541],
+          [11.580883938708233, 44.90126515606777],
+          [11.583115536608624, 44.89457721173038],
+          [11.584832150378155, 44.886915519656064],
+          [11.591011959948467, 44.88205042352737],
+          [11.600281674303936, 44.87998263308281],
+          [11.611955070888742, 44.87980064371163],
+          [11.619336492144967, 44.87958758844962],
+          [11.62191100780003, 44.87548189110346],
+          [11.62191100780003, 44.89409078543467],
+          [11.603028256335186, 44.89275309190636],
+          [11.596333462634014, 44.89652287576904],
+          [11.593758541979717, 44.908073900164624],
+          [11.591011959948467, 44.9147602745882]]]);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+/*var point=ee.Geometry.Point([11.608072, 44.888296])
+var AOI=point.buffer(1000).bounds()*/
+//var AOI=table.geometry()//table2.filter(ee.Filter.eq('Name','AnK'));
+var AOI=AOI_po2.bounds()
+//.buffer(500).bounds()
+Map.centerObject(AOI,13)
+var Name='CM_po_05_995';
+var foderName='CM_po_3_level_12';
+var Scale=30;
+var RealpixelRate=0.5;
+var bufferTimes=5;
+var percen=99.5;
+var startDate='2000-1-1';
+var yearStart='2010-1-1';
+var midDate='2019-12-31';
+var endDate='2021-12-31';
+var JRCmax=JRC.select('max_extent').clip(AOI).focalMax(1.5,"circle","pixels",bufferTimes);
+var AOI2=JRCmax.eq(1).geometry()
+var JRCmask=ee.Image.pixelArea().clip(AOI2)//JRCmax
+var widthfun = require('users/RAN_CHEN/FUNCTION:ImageToWidths_Yang_s2s1');
+exports.maskCloud_l5_7=function(image){
+  var qa=image.select('QA_PIXEL');
+  var mask=qa.bitwiseAnd(1<<3).eq(0).and(qa.bitwiseAnd(1<<4).eq(0));
+  return image.updateMask(mask).multiply(0.0000275).add(-0.2)
+              .select(['SR_B1','SR_B2','SR_B3','SR_B4','SR_B5','SR_B7']).rename(['Blue','Green','Red','Nir','Swir1','Swir2'])
+              .copyProperties(image, ["system:time_start"])}
+exports.maskCloud_l8_9=function(image){
+  var qa=image.select('QA_PIXEL');
+  var mask=qa.bitwiseAnd(1<<3).eq(0).and(qa.bitwiseAnd(1<<4).eq(0));
+  return image.updateMask(mask).multiply(0.0000275).add(-0.2)
+              .select(['SR_B2','SR_B3','SR_B4','SR_B5','SR_B6','SR_B7']).rename(['Blue','Green','Red','Nir','Swir1','Swir2'])
+              .copyProperties(image, ["system:time_start"])}
+var datasatl5 = l5.filterBounds(AOI).filterDate(startDate, '2012-5-5').map(exports.maskCloud_l5_7);
+var datasatl7 = l7.filterBounds(AOI).filterDate(startDate, '2003-05-30').map(exports.maskCloud_l5_7);
+var datasatl8 = l8.filterBounds(AOI).filterDate('2013-3-18', endDate).map(exports.maskCloud_l8_9);
+var datasatl9 = l9.filterBounds(AOI).filterDate('2021-10-31', endDate).map(exports.maskCloud_l8_9);
+var datasat0=datasatl5.merge(datasatl7).merge(datasatl8).merge(datasatl9);//datasatl8.merge(datasatl9)
+var datasat1=datasat0.filterDate(yearStart,'2018-7-24');
+var datasat2=datasat0.filterDate('2018-10-29',endDate);
+var datasat=datasat1.merge(datasat2)
+                    .map(function(img){
+                      var Q=Flow_po.filter(ee.Filter.eq('Date',img.date().format('yyyy-MM-dd'))).first().get('Discharge');
+                      return img.clip(AOI).set('Q',ee.Number(Q),'log_Q',ee.Number(Q).log());})
+                    .map(function(img){
+                      var allcount=ee.Image.pixelArea().updateMask(JRCmax).reduceRegion({
+                        reducer: ee.Reducer.count(),
+                        geometry: AOI2,
+                        scale: Scale,
+                        maxPixels: 10e15,
+                        }).get("area");
+                      var realcount=ee.Image.pixelArea().updateMask(img.select(0).mask()).updateMask(JRCmax).reduceRegion({
+                        reducer: ee.Reducer.count(),
+                        geometry: AOI2,
+                        scale: Scale,
+                        maxPixels: 10e15,
+                        }).get("area");
+                      var rate=ee.Number(realcount).divide(allcount);
+                      return img.set('RealpixelRate',rate)})
+                    .map(function(image){return image.set('date', image.date().format("yyyyMMdd"),'doy',image.date().format('DD'))})
+                    .sort('system:time_start');
+print(datasat0,datasat,'Image Numbers')
+var dates=datasat.map(function(img){
+  var valid_date=ee.Algorithms.If(ee.Number(img.get('RealpixelRate')).gte(RealpixelRate),img.date().format('yyyy-MM-dd'))
+  return ee.Feature(null, {'date': valid_date})}).distinct('date').aggregate_array('date')
+var Col=ee.ImageCollection(dates.map(function(date){
+  return datasat.filterDate(date,ee.Date(date).advance(1,'day')).toList(1);
+}).flatten());
+print(dates,Col,'After Image Numbers')
+Map.addLayer(Col.first(),{bands:['Nir','Swir1','Red'],min:0,max:0.4},'Landsat_NIR')
+Map.addLayer(JRCmax.selfMask(),{palette:'#b2b2b2',min:0,max:1},'JRC')
+
+var Colmap=Col.filter(ee.Filter.gt('Q',4000)).sort('Q');
+
+Col=Col.map(function(img){return img.select('Nir')});
+var Q=Flow_po.map(function(f){
+  var diff1=ee.Date(f.get('Date')).difference('2010-1-1','day')
+  var diff2=ee.Date(f.get('Date')).difference('2020-1-1','day')
+  return f.set('Diff1',diff1,'Diff2',diff2)}).filter(ee.Filter.and(ee.Filter.lt('Diff2',0),ee.Filter.gte('Diff1',0)))
+//var low=ee.Number(ee.List(Q.aggregate_array('Discharge')).reduce(ee.Reducer.percentile([40])));
+//var mid=ee.Number(ee.List(Q.aggregate_array('Discharge')).reduce(ee.Reducer.percentile([90])));
+//print(low,mid)
+
+//Calculate:[cpixel_mask]
+var Col_CV=Col.filterDate(startDate, midDate)//.map(function(img){return img.updateMask(JRCmask.not())});
+var Cmean=Col_CV.reduce(ee.Reducer.mean());
+var Cstd=Col_CV.reduce(ee.Reducer.stdDev());
+var CV=Cstd.divide(Cmean).rename('NIR_CV');
+Map.addLayer(CV,'','cv')
+var cv_percen=CV.reduceRegion({
+  reducer:ee.Reducer.percentile([5]),
+  geometry:AOI,
+  scale:Scale,
+  maxPixels:10e15
+  }).getNumber('NIR_CV');
+var cpixel_mask=CV.lte(cv_percen);
+///First Calculate:[C_value] And [m_mask]///
+var Col_all=Col.map(function(img){
+  //计算C Value
+  var cpixel_mask_img=img.updateMask(cpixel_mask).rename('NIR_C');
+  var c_mean=cpixel_mask_img.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e15
+  }).getNumber('NIR_C')
+  //计算c、m Image
+  var c_img=ee.Image.constant(c_mean).toFloat().updateMask(JRCmax);
+  var m_img=img.updateMask(JRCmax);
+  var cm_img=c_img.divide(m_img);
+  //计算Q值
+  var q_img=ee.Image.constant(ee.Number(img.get('Q'))).toFloat().updateMask(JRCmax);
+  return img.rename('NIR').addBands(cm_img.rename('CM_IMG'))
+                          .addBands(q_img.rename('Q_IMG'))
+                          .set('date',img.get('date'),'doy',img.get('doy'),'C_mean',c_mean);
+});
+function exportCSV(Col_all,startDate,midDate,endDate,low,mid,i,j){
+var Col_Train_all=Col_all.filterDate(startDate, midDate);
+var Col_Train_low=Col_Train_all.filter(ee.Filter.lt('Q',low));
+var Col_Train_mid=Col_Train_all.filter(ee.Filter.and(ee.Filter.lt('Q',mid),ee.Filter.gte('Q',low)));
+var Col_Train_high=Col_Train_all.filter(ee.Filter.gte('Q',mid));
+//print(Col_Train_all,Col_Train_low,Col_Train_mid,Col_Train_high,'Col_Train')
+
+//Col:[all、low、mid、high]
+var corr_Q_all = Col_Train_all.map(function(img){return img.select(['CM_IMG','Q_IMG'])}).reduce(ee.Reducer.spearmansCorrelation());
+var corr_Q_low = Col_Train_low.map(function(img){return img.select(['CM_IMG','Q_IMG'])}).reduce(ee.Reducer.spearmansCorrelation());
+var corr_Q_mid = Col_Train_mid.map(function(img){return img.select(['CM_IMG','Q_IMG'])}).reduce(ee.Reducer.spearmansCorrelation());
+var corr_Q_high= Col_Train_high.map(function(img){return img.select(['CM_IMG','Q_IMG'])}).reduce(ee.Reducer.spearmansCorrelation());
+//corr_Q_percen:[all、low、mid、high]
+var corr_q_percen_all =corr_Q_all.reduceRegion({
+  reducer:ee.Reducer.percentile([percen]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('correlation')
+var corr_q_percen_low =corr_Q_low.reduceRegion({
+  reducer:ee.Reducer.percentile([percen]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('correlation')
+var corr_q_percen_mid =corr_Q_mid.reduceRegion({
+  reducer:ee.Reducer.percentile([percen]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('correlation')
+var corr_q_percen_high=corr_Q_high.reduceRegion({
+  reducer:ee.Reducer.percentile([percen]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('correlation')
+//Calculate:[mpixel_mask]
+var mpixel_mask_all =corr_Q_all.select('correlation').gte(corr_q_percen_all);
+var mpixel_mask_low =corr_Q_low.select('correlation').gte(corr_q_percen_low);
+var mpixel_mask_mid =corr_Q_mid.select('correlation').gte(corr_q_percen_mid);
+var mpixel_mask_high=corr_Q_high.select('correlation').gte(corr_q_percen_high);
+///Second Calculate:[M_value]///
+var Col_Test=Col_all.filterDate(ee.Date(midDate).advance(1,'day'),endDate);
+var ColSeris=Col_all.map(function(img){
+  var mmask=img.select('NIR').updateMask(mpixel_mask_all).rename('NIR_M')
+  var m_mean=mmask.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+  }).getNumber('NIR_M')
+  return img.set('M_mean',m_mean,'Index',0)
+}).filter(ee.Filter.notNull(['M_mean']))
+                    .map(function(img){
+                      var cm=ee.Number(img.get('C_mean')).divide(img.get('M_mean'))
+                      return img.set('CM',cm,'log_CM',cm.log())})
+var ColSeris_low =Col_Train_low.merge(Col_Test).sort('system:time_start')
+                    .map(function(img){
+                      var mmask=img.select('NIR').updateMask(mpixel_mask_low).rename('NIR_M')
+                      var m_mean=mmask.reduceRegion({
+                        reducer:ee.Reducer.mean(),
+                        geometry:AOI,
+                        scale:Scale,
+                        maxPixels:10e13
+                      }).getNumber('NIR_M')
+                      return img.set('M_mean',m_mean,'Index',1)
+                      }).filter(ee.Filter.notNull(['M_mean']))
+                    .map(function(img){
+                      var cm=ee.Number(img.get('C_mean')).divide(img.get('M_mean'))
+                      return img.set('CM',cm,'log_CM',cm.log())})
+var ColSeris_mid =Col_Train_mid.merge(Col_Test).sort('system:time_start')
+                    .map(function(img){
+                      var mmask=img.select('NIR').updateMask(mpixel_mask_mid).rename('NIR_M')
+                      var m_mean=mmask.reduceRegion({
+                        reducer:ee.Reducer.mean(),
+                        geometry:AOI,
+                        scale:Scale,
+                        maxPixels:10e13
+                      }).getNumber('NIR_M')
+                      return img.set('M_mean',m_mean,'Index',2)
+                    }).filter(ee.Filter.notNull(['M_mean']))
+                    .map(function(img){
+                      var cm=ee.Number(img.get('C_mean')).divide(img.get('M_mean'))
+                      return img.set('CM',cm,'log_CM',cm.log())})
+var ColSeris_high=Col_Train_high.merge(Col_Test).sort('system:time_start')
+                    .map(function(img){
+                      var mmask=img.select('NIR').updateMask(mpixel_mask_high).rename('NIR_M');
+                      var m_mean=mmask.reduceRegion({
+                          reducer:ee.Reducer.mean(),
+                          geometry:AOI,
+                          scale:Scale,
+                          maxPixels:10e13
+                        }).getNumber('NIR_M');
+                      return img.set('M_mean',m_mean,'Index',3);
+                      }).filter(ee.Filter.notNull(['M_mean']))
+                    .map(function(img){
+                      var cm=ee.Number(img.get('C_mean')).divide(img.get('M_mean'));
+                      return img.set('CM',cm,'log_CM',cm.log())});
+//print(ColSeris,ColSeris_low,ColSeris_mid,ColSeris_high,'ColSeris')
+
+Map.addLayer(mpixel_mask_all.selfMask(),{palette:'red'},'mmask')
+Map.addLayer(mpixel_mask_low.selfMask(),{palette:'#02ff0a'},'mmask_low')
+Map.addLayer(mpixel_mask_mid.selfMask(),{palette:'#fbff00'},'mmask_mid')
+Map.addLayer(mpixel_mask_high.selfMask(),{palette:'#3300ff'},'mmask_high')
+//Map.addLayer(cpixel_mask.selfMask(),{palette:'99d9ea'},'cmask')
+
+var listall=ColSeris.filterDate(startDate,midDate).reduceColumns(ee.Reducer.toList(2),['log_CM','log_Q']).get('list');
+var fit_all=ee.List(listall).reduce(ee.Reducer.linearFit());
+var listlow=ColSeris_low.filterDate(startDate,midDate).reduceColumns(ee.Reducer.toList(2),['log_CM','log_Q']).get('list');
+var fit_low=ee.List(listlow).reduce(ee.Reducer.linearFit());
+var listmid=ColSeris_mid.filterDate(startDate,midDate).reduceColumns(ee.Reducer.toList(2),['log_CM','log_Q']).get('list');
+var fit_mid=ee.List(listmid).reduce(ee.Reducer.linearFit());
+var listhigh=ColSeris_high.filterDate(startDate,midDate).reduceColumns(ee.Reducer.toList(2),['log_CM','log_Q']).get('list');
+var fit_high=ee.List(listhigh).reduce(ee.Reducer.linearFit());
+var e_all_Q=ColSeris.map(function(img){
+  var scale=ee.Dictionary(fit_all).getNumber('scale');
+  var offset=ee.Dictionary(fit_all).getNumber('offset');
+  var e_Q=scale.multiply(ee.Number(img.get('log_CM'))).add(offset).exp();
+  return img.set('e_Q',e_Q);
+})
+var e_low_Q=ColSeris_low.map(function(img){
+  var scale=ee.Dictionary(fit_low).getNumber('scale');
+  var offset=ee.Dictionary(fit_low).getNumber('offset');
+  var e_Q=scale.multiply(ee.Number(img.get('log_CM'))).add(offset).exp();
+  return img.set('e_Q',e_Q);
+})
+var e_mid_Q=ColSeris_mid.map(function(img){
+  var scale=ee.Dictionary(fit_mid).getNumber('scale');
+  var offset=ee.Dictionary(fit_mid).getNumber('offset');
+  var e_Q=scale.multiply(ee.Number(img.get('log_CM'))).add(offset).exp();
+  return img.set('e_Q',e_Q);
+})
+var e_high_Q=ColSeris_high.map(function(img){
+  var scale=ee.Dictionary(fit_high).getNumber('scale');
+  var offset=ee.Dictionary(fit_high).getNumber('offset');
+  var e_Q=scale.multiply(ee.Number(img.get('log_CM'))).add(offset).exp();
+  return img.set('e_Q',e_Q);
+})
+//print(e_all_Q)
+///Export Data///
+/*Export.table.toDrive({
+	collection:e_all_Q,
+	description:Name+'_all',
+	folder:foderName,
+	fileNamePrefix:Name+'_all',
+	fileFormat:'CSV',
+});
+Export.table.toDrive({
+	collection:e_low_Q,
+	description:Name+'_low',
+	folder:foderName,
+	fileNamePrefix:Name+'_low',
+	fileFormat:'CSV',
+});
+Export.table.toDrive({
+	collection:e_mid_Q,
+	description:Name+'_mid',
+	folder:foderName,
+	fileNamePrefix:Name+'_mid',
+	fileFormat:'CSV',
+});
+Export.table.toDrive({
+	collection:e_high_Q,
+	description:Name+'_high',
+	folder:foderName,
+	fileNamePrefix:Name+'_high',
+	fileFormat:'CSV',
+});*/
+e_all_Q=e_all_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate)
+e_low_Q=e_low_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate)
+e_mid_Q=e_mid_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate)
+e_high_Q=e_high_Q.filterDate(ee.Date(midDate).advance(1,'day'),endDate)
+var final_Q=e_all_Q.merge(e_low_Q).merge(e_mid_Q).merge(e_high_Q).sort('system:index')
+print(final_Q)
+Export.table.toDrive({
+	collection:final_Q,
+	description:Name+'_Final'+i+'_'+j,
+	folder:foderName,
+	fileNamePrefix:Name+'_Final'+i+'_'+j,
+	fileFormat:'CSV',
+});
+}
+for (var i=0;i<4;i++){
+  var thredshold1=ee.Number(i).multiply(5).add(30);
+  for(var j=0;j<3;j++){
+    var thredshold2=ee.Number(j).multiply(5).add(80);
+    var low=ee.Number(ee.List(Q.aggregate_array('Discharge')).reduce(ee.Reducer.percentile([thredshold1])));
+    var mid=ee.Number(ee.List(Q.aggregate_array('Discharge')).reduce(ee.Reducer.percentile([thredshold2])));
+    exportCSV(Col_all,startDate, midDate,endDate,low,mid,i,j)
+  }
+}
+///Add Map
+/*var rawLayer = null;
+function addPanel(sCol, key,aoi) {
+  var id_list = sCol.reduceColumns(ee.Reducer.toList(), [key]).get('list');
+  id_list.evaluate(function(ids) {
+    var total = ids.length;
+    var showTitle = ui.Label("", {fontWeight: 'bold'});
+    var curIndex = 0;
+    var bPlus = ui.Button("+", function() {
+      curIndex += 1;
+      if (curIndex >= total) {
+        curIndex = 0;
+      }
+      showTitle.setValue(ids[curIndex]);
+      showSelectRawImage(sCol, key, ids[curIndex],aoi);
+    });
+    var bReduce = ui.Button("-", function() {
+      curIndex -= 1;
+      if (curIndex < 0) {
+        curIndex = total - 1;
+      }
+      showTitle.setValue(ids[curIndex]);
+      showSelectRawImage(sCol, key, ids[curIndex],aoi);
+    });
+    showTitle.setValue(ids[curIndex]);
+    showSelectRawImage(sCol, key, ids[curIndex],aoi);
+    var main = ui.Panel({
+      widgets: [
+        ui.Label('click "+" or "-" to move time window', {fontWeight: 'bold'}),
+        bPlus, bReduce,
+        ui.Label("select date: ", {fontWeight: 'bold'}),
+        showTitle
+      ],
+      style: {width: '200px', padding: '8px'}
+    });
+    ui.root.insert(0, main);
+  });
+}
+function showSelectRawImage(sCol, key, value,aoi) {
+  //print("show raw image id is: " + value);
+  if (rawLayer !== null) {
+    Map.remove(rawLayer);
+    rawLayer = null;
+  }
+  var image = ee.Image(sCol.filter(ee.Filter.eq(key, value)).first());
+  print(image.clip(aoi))
+  rawLayer = Map.addLayer(image,{bands:['Nir','Swir1','Red'],min:0,max:0.4}, 'NIR');
+}
+addPanel(Colmap, "date",AOI);*/

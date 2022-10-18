@@ -1,0 +1,150 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var table = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/AOI_YangX"),
+    table2 = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/CL_buffer"),
+    table3 = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/AOI_AnK"),
+    AnK_aoi = 
+    /* color: #d6d1d1 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[109.00197249877077, 32.70524101042399],
+          [109.00197249877077, 32.686921519310346],
+          [109.02377349364382, 32.686921519310346],
+          [109.02377349364382, 32.70524101042399]]], null, false),
+    YangX_aoi = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[107.52350781822028, 33.22625542824832],
+          [107.52350781822028, 33.205934089241275],
+          [107.54779790305915, 33.205934089241275],
+          [107.54779790305915, 33.22625542824832]]], null, false),
+    JRC = ee.Image("JRC/GSW1_3/GlobalSurfaceWater"),
+    Flow_AnK = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_AnK");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+var AOI=AnK_aoi.buffer(500).bounds()//table3.geometry();
+Map.centerObject(AOI,13)
+var Name='CM_S2_AnK_1_100';
+var Scale=10;
+var RealpixelRate=1;
+var bufferTimes=2;
+var percen=100;
+var JRCbuffer=JRC.select('max_extent').clip(AOI).focalMax(1.5,"circle","pixels",bufferTimes)
+var parameter = {//1. Data Selection
+              START_DATE: "2019-1-1",
+              STOP_DATE: "2019-12-31",
+              POLARIZATION:'VVVH',
+              ORBIT : 'ASCENDING',//'DESCENDING'
+              //GEOMETRY: geometry, //uncomment if interactively selecting a region of interest
+              GEOMETRY: AOI, 
+              //2. Additional Border noise correction
+              APPLY_ADDITIONAL_BORDER_NOISE_CORRECTION: true,
+              //3.Speckle filter
+              APPLY_SPECKLE_FILTERING: true,
+              SPECKLE_FILTER_FRAMEWORK: 'MONO',//MULTI
+              SPECKLE_FILTER: 'REFINED LEE', //'BOXCAR' ,'LEE','GAMMA MAP','REFINED LEE','LEE SIGMA'
+              SPECKLE_FILTER_KERNEL_SIZE: 9,
+              SPECKLE_FILTER_NR_OF_IMAGES: 10,
+              //4. Radiometric terrain normalization
+              APPLY_TERRAIN_FLATTENING: true,
+              DEM: ee.Image('USGS/SRTMGL1_003'),
+              TERRAIN_FLATTENING_MODEL: 'VOLUME',
+              TERRAIN_FLATTENING_ADDITIONAL_LAYOVER_SHADOW_BUFFER: 0,
+              //5. Output
+              FORMAT : 'DB',
+              CLIP_TO_ROI: true,
+              SAVE_ASSETS: false,
+              //6.S2
+              CLOUDY_PIXEL_PERCENTAGE:10,
+}
+var wrapper = require('users/RAN_CHEN/FUNCTION:ImagePreprocessing');
+var helper = require('users/RAN_CHEN/S1Preprocessing:utilities.js');
+var s1_preprocces = wrapper.s1_preproc(parameter);//return [s1, s1_1]
+print(s1_preprocces)
+s1_preprocces = s1_preprocces[1];
+var s1_preprocces_view = s1_preprocces.map(helper.add_ratio_lin).map(helper.lin_to_db2);
+var Col=s1_preprocces_view.map(function(img){
+  return img.select('VV').rename('NIR')
+})
+Map.addLayer(Col.first(),{bands:['NIR'],min:-25,max:0},'VV')
+///////////////////////
+//计算C: Pixel_Mask//
+///////////////////////
+var Cmean=Col.reduce(ee.Reducer.mean());
+var Cstd=Col.reduce(ee.Reducer.stdDev());
+var CV=Cstd.divide(Cmean).rename('NIR_CV')
+Map.addLayer(CV,'','cv')
+
+var cv_percen=CV.reduceRegion({
+  reducer:ee.Reducer.percentile([5]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e15
+}).getNumber('NIR_CV')
+var cpixel_mask=CV.lte(cv_percen);
+/////////////////////////
+//计算C、M timeSeris//
+/////////////////////////
+var ColSeris=Col.map(function(img){
+  //计算C Value
+  var cpixel_mask_img=img.updateMask(cpixel_mask).rename('NIR_C');
+  var c_mean=cpixel_mask_img.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e15
+}).getNumber('NIR_C')
+  
+  //计算c、m Image
+  var c_img=ee.Image.constant(c_mean).toFloat().updateMask(JRCbuffer)
+  var m_img=img.updateMask(JRCbuffer)
+  var cm_img=c_img.divide(m_img)
+  //计算Q值
+  var Q=Flow_AnK.filter(ee.Filter.eq('Date',img.date().format('yyyy-MM-dd'))).first().get('Discharge')
+  var q_img=ee.Image.constant(ee.Number(Q)).toFloat().updateMask(JRCbuffer)
+  return img.rename('NIR').addBands(cm_img.rename('CM_IMG'))
+                          .addBands(q_img.rename('Q_IMG'))
+                          .set('date',img.get('date'),'C_mean',c_mean,'Q',ee.Number(Q))
+})
+print(ColSeris)
+//////////////////////////////////////////////////////
+//计算spearmansCorrelation between (CWM and C、W、Q)//
+//计算M：Pixel_Mask///
+//////////////////////////////////////////////////////
+var corr_Q=ColSeris.map(function(img){return img.select(['CM_IMG','Q_IMG'])}).reduce(ee.Reducer.spearmansCorrelation());
+Map.addLayer(corr_Q,{bands:['correlation'],palette:['cccccc', 'ffffff','99d9ea', '0000ff']},'corr_Q')
+
+var corr_q_percen=corr_Q.reduceRegion({
+  reducer:ee.Reducer.percentile([percen]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('correlation')
+print(corr_q_percen)
+var mpixel_mask=corr_Q.select('correlation').gte(corr_q_percen)
+////////////////////////
+///计算M：timeSeris//
+////////////////////////
+var ColSeris2=ColSeris.map(function(img){
+  var mmask=img.select('NIR').updateMask(mpixel_mask).rename('NIR_M')
+  var m_mean=mmask.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+  }).getNumber('NIR_M')
+  var cm=ee.Number(img.get('C_mean')).divide(m_mean)
+  return img.set('M_mean',m_mean,'CM',cm)
+})
+print(ColSeris2)
+
+Map.addLayer(mpixel_mask.selfMask(),{palette:'red'},'mmask')
+Map.addLayer(cpixel_mask.selfMask(),{palette:'blue'},'cmask')
+var dataList = ColSeris2.reduceColumns(ee.Reducer.toList(2), ['CM','Q']).get('list');
+print(dataList)
+Export.table.toDrive({
+		collection:ColSeris2,
+		description:Name,
+		folder:'CM',
+		fileNamePrefix:Name,
+		fileFormat:'CSV',
+})

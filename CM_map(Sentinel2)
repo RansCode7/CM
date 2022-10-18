@@ -1,0 +1,183 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var table = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/AOI_YangX"),
+    table2 = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/CL_buffer"),
+    table3 = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/AOI_AnK"),
+    AnK_aoi = 
+    /* color: #d6d1d1 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[109.00197249877077, 32.70524101042399],
+          [109.00197249877077, 32.686921519310346],
+          [109.02377349364382, 32.686921519310346],
+          [109.02377349364382, 32.70524101042399]]], null, false),
+    YangX_aoi = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[107.52350781822028, 33.22625542824832],
+          [107.52350781822028, 33.205934089241275],
+          [107.54779790305915, 33.205934089241275],
+          [107.54779790305915, 33.22625542824832]]], null, false),
+    JRC = ee.Image("JRC/GSW1_3/GlobalSurfaceWater"),
+    Flow_AnK = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_AnK"),
+    s2c = ee.ImageCollection("COPERNICUS/S2");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+//var point=ee.Geometry.Point([107.52218, 33.22178])
+//var AOI=point.buffer(660).bounds()
+//var AOI=table.geometry()//table2.filter(ee.Filter.eq('Name','AnK'));
+var AOI=AnK_aoi.buffer(500).bounds()//table3.geometry();
+Map.centerObject(AOI,14)
+var Name='CM_S2_AnK_08_99';
+var Scale=10;
+var RealpixelRate=0.8;
+var bufferTimes=2;
+var percen=95;
+var JRCmax=JRC.select('max_extent').clip(AOI).focalMax(1.5,"circle","pixels",bufferTimes);
+var JRCmin=JRC.select('occurrence').gte(95).clip(AOI);
+var JRCmask=JRCmax.subtract(JRCmin);
+exports.maskS2clouds=function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
+             qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask).divide(10000)
+      .select(['B8'])
+      .copyProperties(image, ["system:time_start"]);
+}
+var datasat = s2c.filterBounds(AOI)
+                 .filterDate('2015-1-1', '2019-12-31')
+                 //.map(function(img){return img.clip(AOI)}).filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',80)).filter(ee.Filter.gt('CLOUD_COVERAGE_ASSESSMENT',50))
+                 .map(exports.maskS2clouds)
+                 .map(function(img){return img.clip(AOI)})
+                 .map(function(img){ 
+                   var allcount=ee.Image.pixelArea().reduceRegion({
+                     reducer: ee.Reducer.count(),
+                     geometry: AOI,
+                     scale: Scale,
+                     maxPixels: 10e13,
+                     }).get("area");
+                   var realcount=ee.Image.pixelArea().updateMask(img.select(0).selfMask()).reduceRegion({
+                     reducer: ee.Reducer.count(),
+                     geometry: AOI,
+                     scale: Scale,
+                     maxPixels: 10e13,
+                      }).get("area");
+                   var rate=ee.Number(realcount).divide(allcount);
+                   return img.set('RealpixelRate',rate)})
+                 .filter(ee.Filter.gte('RealpixelRate',RealpixelRate))
+                 .map(function(image) {var time_start = image.get("system:time_start");return image.set("date", ee.Date(time_start).format("yyyyMMdd"));})
+                 .sort("system:time_start");
+var dates=datasat.map(function(img){
+                   var valid_date=ee.Algorithms.If(ee.Number(img.get('RealpixelRate')).gte(RealpixelRate),img.date().format('YYYY-MM-dd'));
+                   return ee.Feature(null, {'date': valid_date})}).distinct('date').aggregate_array('date');
+var Col=ee.ImageCollection(dates.map(function(date){
+  return datasat.filterDate(date,ee.Date(date).advance(1,'day')).toList(1);
+}).flatten());
+print(dates,Col);
+Map.addLayer(Col.first(),{min:0,max:0.3},'NIR')
+///////////////////////
+//计算C: Pixel_Mask//
+///////////////////////
+var Cmean=Col.reduce(ee.Reducer.mean());
+var Cstd=Col.reduce(ee.Reducer.stdDev());
+var CV=Cstd.divide(Cmean).rename('NIR_CV')
+var CVW=Cstd.multiply(Cmean).rename('NIR_CVW');
+Map.addLayer(CV,'','cv')
+
+var cv_percen=CV.reduceRegion({
+  reducer:ee.Reducer.percentile([5]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e15
+}).getNumber('NIR_CV')
+var cvw_percen=CVW.updateMask(JRCmax).reduceRegion({
+  reducer:ee.Reducer.percentile([5]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('NIR_CVW')
+var cpixel_mask=CV.lte(cv_percen);
+var wpixel_mask=CVW.lte(cvw_percen);
+Map.addLayer(cpixel_mask.selfMask(),{palette:'blue'},'cmask');
+Map.addLayer(wpixel_mask.selfMask(),{palette:'green'},'wmask');
+/////////////////////////
+//计算C、M timeSeris//
+/////////////////////////
+var ColSeris=Col.map(function(img){
+  //计算C Value
+  var cpixel_mask_img=img.updateMask(cpixel_mask).rename('NIR_C');
+  var c_mean=cpixel_mask_img.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e15
+}).getNumber('NIR_C')
+  var wpixel_mask_img=img.updateMask(wpixel_mask).rename('NIR_W');
+  var w_mean=wpixel_mask_img.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+}).getNumber('NIR_W');
+  //计算c、m Image
+  var c_img=ee.Image.constant(c_mean).toFloat().updateMask(JRCmask)
+  var m_img=img.updateMask(JRCmask)
+  var cm_img=c_img.divide(m_img)
+  //计算Q值
+  var Q=Flow_AnK.filter(ee.Filter.eq('Date',img.date().format('yyyy-MM-dd'))).first().get('Discharge')
+  var q_img=ee.Image.constant(ee.Number(Q)).toFloat().updateMask(JRCmask)
+  return img.rename('NIR').addBands(cm_img.rename('CM_IMG'))
+                          .addBands(q_img.rename('Q_IMG'))
+                          .set('date',img.get('date'),'C_mean',c_mean,'W_mean',w_mean,'Q',ee.Number(Q))
+})
+//////////////////////////////////////////////////////
+//计算spearmansCorrelation between (CWM and C、W、Q)//
+//计算M：Pixel_Mask///
+//////////////////////////////////////////////////////
+var corr_Q=ColSeris.map(function(img){return img.select(['CM_IMG','Q_IMG'])}).reduce(ee.Reducer.spearmansCorrelation());
+Map.addLayer(corr_Q,{bands:['correlation'],palette:['cccccc', 'ffffff','99d9ea', '0000ff']},'corr_Q')
+
+var corr_q_percen=corr_Q.reduceRegion({
+  reducer:ee.Reducer.percentile([percen]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('correlation')
+var mpixel_mask=corr_Q.select('correlation').gte(corr_q_percen)
+////////////////////////
+///计算M：timeSeris*///
+////////////////////////
+var ColSeris2=ColSeris.map(function(img){
+  var mmask=img.select('NIR').updateMask(mpixel_mask).rename('NIR_M')
+  var m_mean=mmask.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+  }).getNumber('NIR_M')
+  var cm=ee.Number(img.get('C_mean')).divide(m_mean)
+  return img.set('M_mean',m_mean,'CM',cm)
+})
+print(ColSeris2)
+
+Map.addLayer(mpixel_mask.selfMask(),{palette:'red'},'mmask')
+Map.addLayer(cpixel_mask.selfMask(),{palette:'blue'},'cmask')
+var dataList = ColSeris2.reduceColumns(ee.Reducer.toList(2), ['CM','Q']).get('list');
+print(dataList)
+Export.table.toDrive({
+		collection:ColSeris2,
+		description:Name,
+		folder:'CMS2',
+		fileNamePrefix:Name,
+		fileFormat:'CSV',
+})
+/*Export.image.toDrive({
+		image:corr_Q,
+		description:'corr_Q'+Name,
+		folder:'CM',
+		fileNamePrefix:'corr_Q'+Name,
+		region:AOI,
+		scale:Scale,
+		maxPixels:1e13,
+})*/

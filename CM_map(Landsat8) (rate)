@@ -1,0 +1,246 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var table = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/AOI_YangX"),
+    table2 = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/CL_buffer"),
+    table3 = ee.FeatureCollection("users/RAN_CHEN/Hang_SoloDM/AOI_AnK"),
+    AnK_aoi = 
+    /* color: #d6d1d1 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[109.00197249877077, 32.70524101042399],
+          [109.00197249877077, 32.686921519310346],
+          [109.02377349364382, 32.686921519310346],
+          [109.02377349364382, 32.70524101042399]]], null, false),
+    l8 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2"),
+    YangX_aoi = 
+    /* color: #d63000 */
+    /* shown: false */
+    ee.Geometry.Polygon(
+        [[[107.52350781822028, 33.22625542824832],
+          [107.52350781822028, 33.205934089241275],
+          [107.54779790305915, 33.205934089241275],
+          [107.54779790305915, 33.22625542824832]]], null, false),
+    JRC = ee.Image("JRC/GSW1_3/GlobalSurfaceWater"),
+    Flow_AnK = ee.FeatureCollection("users/RAN_CHEN/Discharge_Data/Discharge_AnK");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+//var point=ee.Geometry.Point([107.52218, 33.22178])
+//var AOI=point.buffer(660).bounds()
+//var AOI=table.geometry()//table2.filter(ee.Filter.eq('Name','AnK'));
+var AOI=AnK_aoi.buffer(500).bounds()//table3.geometry();
+Map.centerObject(AOI,14)
+var Name='CM_L8_AnK_08_99';
+var Scale=30;
+var RealpixelRate=0.8;
+var bufferTimes=3;
+var percen=99;
+var start_date='2015-1-1';
+var train_date='2018-12-31';
+var test_date='2019-1-1';
+var end_date='2020-1-1';
+var JRCmax=JRC.select('max_extent').clip(AOI).focalMax(1.5,"circle","pixels",bufferTimes);
+var JRCmin=JRC.select('occurrence').gte(95).clip(AOI);
+var JRCmask=JRCmax//.subtract(JRCmin);
+exports.maskL8clouds=function(image) {
+  var qa=image.select('QA_PIXEL');
+  var mask=qa.bitwiseAnd(1<<3).eq(0).and(qa.bitwiseAnd(1<<4).eq(0));
+  var bn8 = ['SR_B2','SR_B3','SR_B4','SR_B5','SR_B6'];
+  var bns = ['Blue', 'Green', 'Red', 'Nir','Swir1'];
+  return image.updateMask(mask).divide(10000)
+      .select(bn8,bns)
+      .copyProperties(image, ["system:time_start"]);
+}
+var datasat = l8.filterBounds(AOI)
+                .filterDate(start_date,end_date)//.filter(ee.Filter.lte('CLOUD_COVER',70))
+                .map(exports.maskL8clouds)
+                .map(function(img){return img.clip(AOI)})
+                .map(function(img){ 
+                            var allcount=ee.Image.pixelArea().reduceRegion({
+                              reducer: ee.Reducer.count(),
+                              geometry: AOI,
+                              scale: Scale,
+                              maxPixels: 10e15,
+                              }).get("area");
+                            var realcount=ee.Image.pixelArea().updateMask(img.select(0).mask()).reduceRegion({
+                             reducer: ee.Reducer.count(),
+                             geometry: AOI,
+                             scale: Scale,
+                             maxPixels: 10e15,
+                             }).get("area");
+                            var rate=ee.Number(realcount).divide(allcount);
+                            return img.set('RealpixelRate',rate)})
+                .filter(ee.Filter.gte('RealpixelRate',RealpixelRate))
+                .map(function(image) {
+                  var time_start = image.get("system:time_start");
+                  return image.set("date", ee.Date(time_start).format("yyyyMMdd"),'doy',ee.Date(time_start).format("DD"));
+                })
+                .sort("system:time_start");
+var dates=datasat.map(function(img){
+                   var valid_date=ee.Algorithms.If(ee.Number(img.get('RealpixelRate')).gte(RealpixelRate),img.date().format('yyyy-MM-dd'))
+                   return ee.Feature(null, {'date': valid_date})}).distinct('date').aggregate_array('date')
+var Col=ee.ImageCollection(dates.map(function(date){
+  return datasat.filterDate(date,ee.Date(date).advance(1,'day')).toList(1)
+}).flatten())
+print(dates,Col)
+Map.addLayer(Col.first(),{bands:['Nir'],min:0,max:3},'Landsat_NIR')
+/////waterOut
+exports.ClassifyWaterZou2018 = function(image) {
+  var mndwi = image.normalizedDifference(['Green', 'Swir1']).rename('mndwi');
+  var ndvi = image.normalizedDifference(['Nir', 'Red']).rename('ndvi');
+  var evi = image.expression('2.5 * (Nir - Red) / (1 + Nir + 6 * Red - 7.5 * Blue)', {
+    'Nir': image.select(['Nir']),
+    'Red': image.select(['Red']),
+    'Blue': image.select(['Blue'])
+    }).rename(['evi']);
+  var water = (mndwi.gt(ndvi).or(mndwi.gt(evi))).and(evi.lt(0.1)); 
+  return water.rename(['waterMask']);
+};
+var waterCol=Col.map(exports.ClassifyWaterZou2018);
+print(waterCol)
+
+var Coltrain=Col.filterDate(start_date, train_date);
+var Coltest=Col.filterDate(test_date, end_date);
+///////////////////////
+//计算C.W: Pixel_Mask//
+///////////////////////
+var Cmean=Coltrain.map(function(img){return img.select('Nir')}).reduce(ee.Reducer.mean());
+var Cstd=Coltrain.map(function(img){return img.select('Nir')}).reduce(ee.Reducer.stdDev());
+var CV=Cstd.divide(Cmean).rename('NIR_CV');
+var CVW=Cstd.multiply(Cmean).rename('NIR_CVW');
+Map.addLayer(CV,'','cv')
+
+var cv_percen=CV.reduceRegion({
+  reducer:ee.Reducer.percentile([5]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e15
+}).getNumber('NIR_CV')
+var cpixel_mask=CV.lte(cv_percen);
+var cvw_percen=CVW.reduceRegion({
+  reducer:ee.Reducer.percentile([5]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('NIR_CVW')
+var wpixel_mask=CVW.lte(cvw_percen).updateMask(JRCmax);
+/////////////////////////
+//计算C、M timeSeris//
+/////////////////////////
+var ColSeris=Coltrain.map(function(img){
+  //计算C Value
+  var cpixel_mask_img=img.select('Nir').updateMask(cpixel_mask).rename('NIR_C');
+  var c_mean=cpixel_mask_img.reduceRegion({
+    reducer:ee.Reducer.median(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e15
+}).getNumber('NIR_C')
+  var wpixel_mask_img=img.select('Nir').updateMask(wpixel_mask).rename('NIR_W');
+  var w_mean=wpixel_mask_img.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+}).getNumber('NIR_W');
+  //计算c、m Image
+  var c_img=ee.Image.constant(c_mean).toFloat().updateMask(JRCmask)
+  var m_img=img.select('Nir').updateMask(JRCmask)
+  var cm_img=c_img.divide(m_img)
+  // rate
+  var k3=ee.Kernel.square(5.5,'pixels')
+  var newimg=img.select('Nir').reduceNeighborhood({
+    reducer:ee.Reducer.max(),
+    kernel:k3,
+    optimization:'Window'
+  });
+  var rate_img=(img.select('Nir').subtract(newimg)).divide(ee.Image.constant(w_mean).toFloat().subtract(newimg)).updateMask(JRCmask);
+  //计算Q值
+  var Q=Flow_AnK.filter(ee.Filter.eq('Date',img.date().format('yyyy-MM-dd'))).first().get('Discharge')
+  var q_img=ee.Image.constant(ee.Number(Q)).toFloat().updateMask(JRCmask)
+  return img.select('Nir').addBands(cm_img.rename('CM_IMG'))
+                          .addBands(q_img.rename('Q_IMG'))
+                          .addBands(newimg.rename('New_IMG'))
+                          .addBands(rate_img.rename('Rate_IMG'))
+                          .set('date',img.get('date'),'C_mean',c_mean,'W_mean',w_mean,'Q',ee.Number(Q))
+})
+print(ColSeris)
+Map.addLayer(ColSeris.first().select('New_IMG'),{min:0,max:3},'newimg')
+Map.addLayer(ColSeris.first().select('Rate_IMG'),{min:0,max:1},'Rateimg')
+//////////////////////////////////////////////////////
+//计算spearmansCorrelation between (CWM and C、W、Q)//
+//计算M：Pixel_Mask///
+//////////////////////////////////////////////////////
+var corr_Q=ColSeris.map(function(img){return img.select(['CM_IMG','Q_IMG'])}).reduce(ee.Reducer.spearmansCorrelation());
+//Map.addLayer(corr_Q,{bands:['correlation'],palette:['cccccc', 'ffffff','99d9ea', '0000ff']},'corr_Q')
+
+var corr_q_percen=corr_Q.reduceRegion({
+  reducer:ee.Reducer.percentile([percen]),
+	geometry:AOI,
+	scale:Scale,
+	maxPixels:10e13
+}).getNumber('correlation')
+var mpixel_mask=corr_Q.select('correlation').gte(corr_q_percen)
+
+////////////////////////
+///计算timeSeris////////
+////////////////////////
+/*var Coltrain2=ColSeris.map(function(img){
+  var new_W_mean=wfit.getNumber(scale).img.get('W_mean')
+  var diff=ee.Number(img.get('W_mean')).subtract(ee.Number(w_median))
+  var diff_img=ee.Image.constant(diff).toFloat().multiply(img.select('Rate_IMG'))
+  var mmask=img.select('NIR').updateMask(mpixel_mask).rename('NIR_M')
+  var mmask2=img.select('NIR').subtract(diff_img).updateMask(mpixel_mask).rename('NIR_M')
+  var m_mean=mmask.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+  }).getNumber('NIR_M')
+  var m_mean2=mmask2.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+  }).getNumber('NIR_M')
+  return img.set('M_mean',m_mean,'M_mean_change',m_mean2,'Diff',diff)
+})
+var Coltest2=Coltest.map(function(img){
+  var cmask=img.select('NIR').updateMask(cpixel_mask).rename('NIR_C')
+  var mmask=img.select('NIR').updateMask(mpixel_mask).rename('NIR_M')
+  var c_mean=cmask.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+  }).getNumber('NIR_C')
+  var m_mean=mmask.reduceRegion({
+    reducer:ee.Reducer.mean(),
+    geometry:AOI,
+    scale:Scale,
+    maxPixels:10e13
+  }).getNumber('NIR_M')
+  return img.set('C_mean',c_mean,'M_mean',m_mean,'Q',0)
+})
+
+print(ColSeris,'ColSeris')
+print(Coltrain2,Coltest2,'Coltrain_test2')
+var Col_all=Coltrain2.merge(Coltest2)*/
+Map.addLayer(mpixel_mask.selfMask(),{palette:'red'},'mmask')
+Map.addLayer(cpixel_mask.selfMask(),{palette:'blue'},'cmask')
+Map.addLayer(wpixel_mask.selfMask(),{palette:'green'},'wmask')
+
+
+/*Export.table.toDrive({
+		collection:Col_all,
+		description:Name,
+		folder:'CM_Fit',
+		fileNamePrefix:Name,
+		fileFormat:'CSV',
+})*/
+/*Export.image.toDrive({
+		image:corr_Q,
+		description:'corr_Q'+Name,
+		folder:'CM',
+		fileNamePrefix:'corr_Q'+Name,
+		region:AOI,
+		scale:Scale,
+		maxPixels:1e13,
+})*/
